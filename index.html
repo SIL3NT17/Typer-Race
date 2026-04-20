@@ -12,22 +12,21 @@
         input, button { padding: 10px; margin: 10px; width: 80%; border-radius: 5px; border: none; font-size: 16px; }
         button { background-color: #00d2ff; color: #000; font-weight: bold; cursor: pointer; transition: 0.2s; }
         button:hover { background-color: #00a8cc; }
-        #text-display { font-size: 24px; margin: 20px 0; letter-spacing: 1px; line-height: 1.5; background: #1e1e2f; padding: 15px; border-radius: 5px;}
+        #text-display { font-size: 24px; margin: 20px 0; letter-spacing: 1px; line-height: 1.5; background: #1e1e2f; padding: 15px; border-radius: 5px; user-select: none; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; }
         .correct { color: #00ff00; }
         .incorrect { background-color: #ff0000; color: white; }
-        .track { width: 100%; background: #555; margin: 10px 0 20px 0; border-radius: 5px; text-align: left; height: 25px; overflow: hidden; position: relative;}
-        .car { height: 100%; background: #00d2ff; width: 0%; border-radius: 5px; transition: width 0.1s linear; }
+        .track { width: 100%; background: #555; margin: 10px 0 20px 0; border-radius: 5px; text-align: left; height: 40px; overflow: hidden; position: relative;}
+        .car { height: 100%; background: #00d2ff; width: 0%; border-radius: 5px; transition: width 0.1s linear; position: relative; }
         .player-name { font-size: 14px; margin-bottom: 2px; text-align: left; font-weight: bold;}
+        #skin-modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #2a2a40; padding: 30px; border-radius: 15px; box-shadow: 0 8px 20px rgba(0,0,0,0.6); z-index: 9999; max-width: 500px; }
     </style>
 </head>
 <body>
-
     <div id="auth-screen" class="screen active">
         <h2>Nitro Type Clone</h2>
         <input type="text" id="username" placeholder="Enter Username">
         <button onclick="login()">Play</button>
     </div>
-
     <div id="lobby-screen" class="screen">
         <h2>Welcome, <span id="user-display"></span>!</h2>
         <button onclick="createRoom()">Create New Race Room</button>
@@ -36,20 +35,28 @@
         <button onclick="joinRoom()">Join Room</button>
         <p id="lobby-msg" style="color: #ff5555;"></p>
     </div>
-
     <div id="room-screen" class="screen">
         <h2>Room Code: <span id="room-code-display" style="color: #00d2ff; letter-spacing: 2px;"></span></h2>
         <div id="players-list" style="margin: 20px 0; font-size: 18px;"></div>
         <p id="waiting-msg">Waiting for host to start...</p>
         <button id="start-btn" onclick="startGame()" style="display:none; background-color: #00ff00;">Start Race</button>
     </div>
-
     <div id="game-screen" class="screen">
-        <div id="race-tracks"></div>
         <div id="text-display"></div>
         <input type="text" id="type-input" placeholder="Type here to race..." autocomplete="off" disabled>
+        <div id="race-tracks"></div>
     </div>
-
+    <div id="leaderboard-screen" class="screen">
+        <h2>Round <span id="lb-round"></span> Leaderboard</h2>
+        <div id="leaderboard-list" style="margin: 20px 0; font-size: 18px;"></div>
+        <button id="next-round-btn" onclick="nextRound()" style="display: none;">Next Round</button>
+        <p id="lb-waiting">Waiting for host...</p>
+    </div>
+    <div id="skin-modal">
+        <h2>Choose Your Car Skin</h2>
+        <p style="color:#00d2ff; margin-bottom:20px;">All skins are free!</p>
+        <div id="skin-options" style="display:flex; gap:15px; flex-wrap:wrap; justify-content:center;"></div>
+    </div>
     <script>
         let peer = null;
         let connections = [];
@@ -57,13 +64,45 @@
         let isHost = false;
         let players = [];
         let username = "";
-        const targetText = "The quick brown fox jumps over the lazy dog and races to the finish line.";
-
+        let currentTargetText = "";
+        let currentRound = 1;
+        let maxRounds = 3;
+        let finishOrder = [];
+        let mySkinId = 1;
+        let availableSkins = [
+            {id: 1, name: "Classic Blue", color: "#00d2ff"},
+            {id: 2, name: "Red Flame", color: "#ff2d00"},
+            {id: 3, name: "Green Nitro", color: "#00ff7f"},
+            {id: 4, name: "Yellow Bolt", color: "#ffd700"},
+            {id: 5, name: "Purple Shadow", color: "#9b59b6"}
+        ];
+        const sentencePool = [
+            "The quick brown fox jumps over the lazy dog.",
+            "Typing is a skill that improves with consistent practice and dedication.",
+            "Competitive racers know that accuracy matters as much as speed.",
+            "Every keystroke brings you closer to crossing the finish line.",
+            "Master the keyboard to dominate in this multiplayer typing challenge.",
+            "Fast fingers win the race in the exciting world of Nitro Type.",
+            "Challenge accepted: type these words as fast as you can!",
+            "Blazing through sentences to claim the victory crown.",
+            "Precision and velocity combine to create the perfect typing champion.",
+            "Unlock your potential by mastering the art of rapid text entry."
+        ];
+        function getRandomText() {
+            let textParts = [];
+            for (let i = 0; i < 3; i++) {
+                textParts.push(sentencePool[Math.floor(Math.random() * sentencePool.length)]);
+            }
+            return textParts.join(" ");
+        }
+        function getSkinColor(id) {
+            const skin = availableSkins.find(s => s.id === id);
+            return skin ? skin.color : "#00d2ff";
+        }
         function showScreen(id) {
             document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
             document.getElementById(id).classList.add('active');
         }
-
         function login() {
             const inputName = document.getElementById('username').value.trim();
             if (!inputName) return alert("Please enter a username.");
@@ -71,137 +110,228 @@
             document.getElementById('user-display').innerText = username;
             showScreen('lobby-screen');
         }
-
+        function showSkinModal() {
+            const container = document.getElementById('skin-options');
+            container.innerHTML = availableSkins.map(s => `
+                <div onclick="confirmSkin(${s.id});" style="cursor:pointer; text-align:center; padding:15px; border:3px solid #444; border-radius:12px; width:130px; background:#1e1e2f;">
+                    <div style="font-size:50px; background:${s.color}; width:70px; height:40px; border-radius:8px; margin:0 auto 12px; display:flex; align-items:center; justify-content:center; box-shadow:0 4px 8px rgba(0,0,0,0.3);">🚗</div>
+                    <div style="font-weight:bold;">${s.name}</div>
+                </div>
+            `).join('');
+            document.getElementById('skin-modal').style.display = 'block';
+        }
+        function confirmSkin(id) {
+            mySkinId = id;
+            document.getElementById('skin-modal').style.display = 'none';
+            if (isHost) {
+                players[0].skinId = mySkinId;
+                broadcast({ type: 'update_players', players });
+            } else {
+                hostConn.send({ type: 'set_skin', skinId: mySkinId });
+            }
+            updateVisuals();
+        }
         function createRoom() {
             isHost = true;
             document.getElementById('lobby-msg').innerText = "Creating room...";
             const code = Math.random().toString(36).substring(2, 7).toUpperCase();
-            
-            // Setup PeerJS host
-            peer = new Peer('nt-clone-' + code); 
-            
+            peer = new Peer('nt-clone-' + code);
             peer.on('open', (id) => {
                 document.getElementById('room-code-display').innerText = code;
                 document.getElementById('start-btn').style.display = 'inline-block';
                 document.getElementById('waiting-msg').style.display = 'none';
-                players = [{ id: 'host', name: username, progress: 0 }];
+                players = [{ id: 'host', name: username, progress: 0, finished: false, skinId: 1 }];
                 updateVisuals();
                 showScreen('room-screen');
+                showSkinModal();
             });
-
             peer.on('error', (err) => {
                 document.getElementById('lobby-msg').innerText = "Error creating room: " + err.type;
             });
-
             peer.on('connection', (conn) => {
                 connections.push(conn);
                 conn.on('data', (data) => {
                     if (data.type === 'join') {
-                        players.push({ id: conn.peer, name: data.name, progress: 0 });
+                        players.push({ id: conn.peer, name: data.name, progress: 0, finished: false, skinId: 1 });
                         broadcast({ type: 'update_players', players });
                     } else if (data.type === 'progress') {
                         let p = players.find(x => x.id === conn.peer);
-                        if (p) p.progress = data.progress;
+                        if (p) {
+                            p.progress = data.progress;
+                            if (data.finished && !p.finished) {
+                                p.finished = true;
+                                finishOrder.push(conn.peer);
+                            }
+                        }
                         broadcast({ type: 'update_players', players });
+                        checkIfRoundComplete();
+                    } else if (data.type === 'set_skin') {
+                        let p = players.find(x => x.id === conn.peer);
+                        if (p) {
+                            p.skinId = data.skinId;
+                            broadcast({ type: 'update_players', players });
+                        }
                     }
                 });
             });
         }
-
         function joinRoom() {
             isHost = false;
             const code = document.getElementById('join-code').value.toUpperCase().trim();
             if (!code) return alert("Enter a room code.");
             document.getElementById('lobby-msg').innerText = "Joining...";
-
             peer = new Peer();
             peer.on('open', () => {
                 hostConn = peer.connect('nt-clone-' + code);
-                
                 hostConn.on('open', () => {
                     hostConn.send({ type: 'join', name: username });
                     document.getElementById('room-code-display').innerText = code;
                     showScreen('room-screen');
+                    showSkinModal();
                 });
-
                 hostConn.on('data', (data) => {
                     if (data.type === 'update_players') {
                         players = data.players;
                         updateVisuals();
                     } else if (data.type === 'start_game') {
+                        currentTargetText = data.text;
+                        currentRound = data.round;
                         startRaceUI(data.text);
+                    } else if (data.type === 'round_end') {
+                        showLeaderboard(data.round, data.ranked);
                     }
                 });
-
                 hostConn.on('error', () => {
                     document.getElementById('lobby-msg').innerText = "Could not connect to room.";
                 });
             });
         }
-
         function broadcast(data) {
             connections.forEach(conn => conn.send(data));
             updateVisuals();
         }
-
         function updateVisuals() {
-            document.getElementById('players-list').innerHTML = players.map(p => `<div>${p.name}</div>`).join('');
+            document.getElementById('players-list').innerHTML = players.map(p => `
+                <div style="display:flex; align-items:center; gap:8px; margin:8px 0;">
+                    <span style="background:${getSkinColor(p.skinId)}; width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:18px;">🚗</span>
+                    <span>${p.name}</span>
+                </div>
+            `).join('');
             document.getElementById('race-tracks').innerHTML = players.map(p => `
                 <div class="player-name">${p.name}</div>
-                <div class="track"><div class="car" style="width: ${p.progress}%"></div></div>
+                <div class="track"><div class="car" style="width: ${p.progress}%; background-color: ${getSkinColor(p.skinId)};">
+                    <span style="position:absolute; right:-8px; top:50%; transform:translateY(-50%); font-size:24px; filter:drop-shadow(2px 2px 3px #000);">🚗</span>
+                </div></div>
             `).join('');
         }
-
-        function startGame() {
-            if (isHost) {
-                broadcast({ type: 'start_game', text: targetText });
-                startRaceUI(targetText);
+        function checkIfRoundComplete() {
+            if (players.every(p => p.finished)) {
+                let ranked = finishOrder.map(id => players.find(p => p.id === id)).filter(Boolean);
+                broadcast({ type: 'round_end', ranked: ranked, round: currentRound });
+                showLeaderboard(currentRound, ranked);
             }
         }
-
+        function showLeaderboard(roundNum, ranked) {
+            document.getElementById('lb-round').innerText = roundNum;
+            let html = '';
+            ranked.forEach((p, i) => {
+                html += `<div style="display:flex; justify-content:space-between; align-items:center; background:#1e1e2f; padding:15px; margin:8px 0; border-radius:8px;">
+                    <span style="font-size:22px; font-weight:bold;">#${i+1}</span>
+                    <span style="flex:1; margin-left:20px;">${p.name}</span>
+                    <span style="color:#00ff00;">FINISHED</span>
+                </div>`;
+            });
+            document.getElementById('leaderboard-list').innerHTML = html;
+            const isHostNext = isHost && currentRound < maxRounds;
+            document.getElementById('next-round-btn').style.display = isHostNext ? 'inline-block' : 'none';
+            document.getElementById('lb-waiting').style.display = isHostNext ? 'none' : 'block';
+            if (!isHostNext && isHost) {
+                document.getElementById('lb-waiting').innerText = 'Game complete!';
+            }
+            showScreen('leaderboard-screen');
+        }
+        function nextRound() {
+            if (!isHost || currentRound >= maxRounds) return;
+            currentRound++;
+            finishOrder = [];
+            players.forEach(p => {
+                p.progress = 0;
+                p.finished = false;
+            });
+            currentTargetText = getRandomText();
+            broadcast({ type: 'start_game', text: currentTargetText, round: currentRound });
+            startRaceUI(currentTargetText);
+        }
+        function startGame() {
+            if (isHost) {
+                currentRound = 1;
+                finishOrder = [];
+                players.forEach(p => {
+                    p.progress = 0;
+                    p.finished = false;
+                });
+                currentTargetText = getRandomText();
+                broadcast({ type: 'start_game', text: currentTargetText, round: currentRound });
+                startRaceUI(currentTargetText);
+            }
+        }
         function startRaceUI(text) {
+            currentTargetText = text;
             document.getElementById('text-display').innerText = text;
             showScreen('game-screen');
             const input = document.getElementById('type-input');
             input.disabled = false;
+            input.value = '';
             input.focus();
-            updateVisuals(); 
+            updateVisuals();
         }
-
+        function getRandomText() {
+            let textParts = [];
+            for (let i = 0; i < 3; i++) {
+                textParts.push(sentencePool[Math.floor(Math.random() * sentencePool.length)]);
+            }
+            return textParts.join(" ");
+        }
         document.getElementById('type-input').addEventListener('input', (e) => {
             const typed = e.target.value;
             let formattedText = "";
             let correctChars = 0;
-
-            for (let i = 0; i < targetText.length; i++) {
+            for (let i = 0; i < currentTargetText.length; i++) {
                 if (i < typed.length) {
-                    if (typed[i] === targetText[i]) {
-                        formattedText += `<span class="correct">${targetText[i]}</span>`;
+                    if (typed[i] === currentTargetText[i]) {
+                        formattedText += `<span class="correct">${currentTargetText[i]}</span>`;
                         correctChars++;
                     } else {
-                        formattedText += `<span class="incorrect">${targetText[i]}</span>`;
+                        formattedText += `<span class="incorrect">${currentTargetText[i]}</span>`;
                     }
                 } else {
-                    formattedText += targetText[i];
+                    formattedText += currentTargetText[i];
                 }
             }
-
             document.getElementById('text-display').innerHTML = formattedText;
-
-            const progress = (correctChars / targetText.length) * 100;
-            
+            const progress = (correctChars / currentTargetText.length) * 100;
+            let finishedThis = false;
+            if (correctChars === currentTargetText.length) {
+                finishedThis = true;
+                document.getElementById('type-input').disabled = true;
+            }
             if (isHost) {
                 let p = players.find(x => x.id === 'host');
-                if (p) p.progress = progress;
+                if (p) {
+                    p.progress = progress;
+                    if (finishedThis && !p.finished) {
+                        p.finished = true;
+                        finishOrder.push('host');
+                    }
+                }
                 broadcast({ type: 'update_players', players });
+                checkIfRoundComplete();
             } else {
-                hostConn.send({ type: 'progress', progress });
+                hostConn.send({ type: 'progress', progress: progress, finished: finishedThis });
             }
-
-            if (correctChars === targetText.length) {
-                document.getElementById('type-input').disabled = true;
-                alert("Race finished!");
-            }
+        });
+        document.getElementById('type-input').addEventListener('paste', (e) => {
+            e.preventDefault();
         });
     </script>
 </body>
