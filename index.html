@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WiFi Type Racer</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #1e1e2f; color: white; text-align: center; padding: 50px; }
+        .screen { display: none; background: #2a2a40; padding: 30px; border-radius: 10px; max-width: 600px; margin: 0 auto; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+        .active { display: block; }
+        input, button { padding: 10px; margin: 10px; width: 80%; border-radius: 5px; border: none; font-size: 16px; }
+        button { background-color: #00d2ff; color: #000; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        button:hover { background-color: #00a8cc; }
+        #text-display { font-size: 24px; margin: 20px 0; letter-spacing: 1px; line-height: 1.5; background: #1e1e2f; padding: 15px; border-radius: 5px;}
+        .correct { color: #00ff00; }
+        .incorrect { background-color: #ff0000; color: white; }
+        .track { width: 100%; background: #555; margin: 10px 0 20px 0; border-radius: 5px; text-align: left; height: 25px; overflow: hidden; position: relative;}
+        .car { height: 100%; background: #00d2ff; width: 0%; border-radius: 5px; transition: width 0.1s linear; }
+        .player-name { font-size: 14px; margin-bottom: 2px; text-align: left; font-weight: bold;}
+    </style>
+</head>
+<body>
+
+    <div id="auth-screen" class="screen active">
+        <h2>Nitro Type Clone</h2>
+        <input type="text" id="username" placeholder="Enter Username">
+        <button onclick="login()">Play</button>
+    </div>
+
+    <div id="lobby-screen" class="screen">
+        <h2>Welcome, <span id="user-display"></span>!</h2>
+        <button onclick="createRoom()">Create New Race Room</button>
+        <hr style="border-color: #444; margin: 20px 0;">
+        <input type="text" id="join-code" placeholder="Enter 5-Letter Room Code">
+        <button onclick="joinRoom()">Join Room</button>
+        <p id="lobby-msg" style="color: #ff5555;"></p>
+    </div>
+
+    <div id="room-screen" class="screen">
+        <h2>Room Code: <span id="room-code-display" style="color: #00d2ff; letter-spacing: 2px;"></span></h2>
+        <div id="players-list" style="margin: 20px 0; font-size: 18px;"></div>
+        <p id="waiting-msg">Waiting for host to start...</p>
+        <button id="start-btn" onclick="startGame()" style="display:none; background-color: #00ff00;">Start Race</button>
+    </div>
+
+    <div id="game-screen" class="screen">
+        <div id="race-tracks"></div>
+        <div id="text-display"></div>
+        <input type="text" id="type-input" placeholder="Type here to race..." autocomplete="off" disabled>
+    </div>
+
+    <script>
+        let peer = null;
+        let connections = [];
+        let hostConn = null;
+        let isHost = false;
+        let players = [];
+        let username = "";
+        const targetText = "The quick brown fox jumps over the lazy dog and races to the finish line.";
+
+        function showScreen(id) {
+            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+            document.getElementById(id).classList.add('active');
+        }
+
+        function login() {
+            const inputName = document.getElementById('username').value.trim();
+            if (!inputName) return alert("Please enter a username.");
+            username = inputName;
+            document.getElementById('user-display').innerText = username;
+            showScreen('lobby-screen');
+        }
+
+        function createRoom() {
+            isHost = true;
+            document.getElementById('lobby-msg').innerText = "Creating room...";
+            const code = Math.random().toString(36).substring(2, 7).toUpperCase();
+            
+            // Setup PeerJS host
+            peer = new Peer('nt-clone-' + code); 
+            
+            peer.on('open', (id) => {
+                document.getElementById('room-code-display').innerText = code;
+                document.getElementById('start-btn').style.display = 'inline-block';
+                document.getElementById('waiting-msg').style.display = 'none';
+                players = [{ id: 'host', name: username, progress: 0 }];
+                updateVisuals();
+                showScreen('room-screen');
+            });
+
+            peer.on('error', (err) => {
+                document.getElementById('lobby-msg').innerText = "Error creating room: " + err.type;
+            });
+
+            peer.on('connection', (conn) => {
+                connections.push(conn);
+                conn.on('data', (data) => {
+                    if (data.type === 'join') {
+                        players.push({ id: conn.peer, name: data.name, progress: 0 });
+                        broadcast({ type: 'update_players', players });
+                    } else if (data.type === 'progress') {
+                        let p = players.find(x => x.id === conn.peer);
+                        if (p) p.progress = data.progress;
+                        broadcast({ type: 'update_players', players });
+                    }
+                });
+            });
+        }
+
+        function joinRoom() {
+            isHost = false;
+            const code = document.getElementById('join-code').value.toUpperCase().trim();
+            if (!code) return alert("Enter a room code.");
+            document.getElementById('lobby-msg').innerText = "Joining...";
+
+            peer = new Peer();
+            peer.on('open', () => {
+                hostConn = peer.connect('nt-clone-' + code);
+                
+                hostConn.on('open', () => {
+                    hostConn.send({ type: 'join', name: username });
+                    document.getElementById('room-code-display').innerText = code;
+                    showScreen('room-screen');
+                });
+
+                hostConn.on('data', (data) => {
+                    if (data.type === 'update_players') {
+                        players = data.players;
+                        updateVisuals();
+                    } else if (data.type === 'start_game') {
+                        startRaceUI(data.text);
+                    }
+                });
+
+                hostConn.on('error', () => {
+                    document.getElementById('lobby-msg').innerText = "Could not connect to room.";
+                });
+            });
+        }
+
+        function broadcast(data) {
+            connections.forEach(conn => conn.send(data));
+            updateVisuals();
+        }
+
+        function updateVisuals() {
+            document.getElementById('players-list').innerHTML = players.map(p => `<div>${p.name}</div>`).join('');
+            document.getElementById('race-tracks').innerHTML = players.map(p => `
+                <div class="player-name">${p.name}</div>
+                <div class="track"><div class="car" style="width: ${p.progress}%"></div></div>
+            `).join('');
+        }
+
+        function startGame() {
+            if (isHost) {
+                broadcast({ type: 'start_game', text: targetText });
+                startRaceUI(targetText);
+            }
+        }
+
+        function startRaceUI(text) {
+            document.getElementById('text-display').innerText = text;
+            showScreen('game-screen');
+            const input = document.getElementById('type-input');
+            input.disabled = false;
+            input.focus();
+            updateVisuals(); 
+        }
+
+        document.getElementById('type-input').addEventListener('input', (e) => {
+            const typed = e.target.value;
+            let formattedText = "";
+            let correctChars = 0;
+
+            for (let i = 0; i < targetText.length; i++) {
+                if (i < typed.length) {
+                    if (typed[i] === targetText[i]) {
+                        formattedText += `<span class="correct">${targetText[i]}</span>`;
+                        correctChars++;
+                    } else {
+                        formattedText += `<span class="incorrect">${targetText[i]}</span>`;
+                    }
+                } else {
+                    formattedText += targetText[i];
+                }
+            }
+
+            document.getElementById('text-display').innerHTML = formattedText;
+
+            const progress = (correctChars / targetText.length) * 100;
+            
+            if (isHost) {
+                let p = players.find(x => x.id === 'host');
+                if (p) p.progress = progress;
+                broadcast({ type: 'update_players', players });
+            } else {
+                hostConn.send({ type: 'progress', progress });
+            }
+
+            if (correctChars === targetText.length) {
+                document.getElementById('type-input').disabled = true;
+                alert("Race finished!");
+            }
+        });
+    </script>
+</body>
+</html>
